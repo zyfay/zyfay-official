@@ -211,7 +211,7 @@ export default function Home() {
               <a href="#" className="hover:text-white transition-colors">Kebijakan Privasi</a>
               <Link href="/cek-pesanan" className="hover:text-white transition-colors">Cek Pesanan</Link>
             </div>
-            <p className="text-muted/40 text-xs mt-4">© {new Date().getFullYear()} {siteName}. Powered by TokoVoucher & Midtrans.</p>
+            <p className="text-muted/40 text-xs mt-4">© {new Date().getFullYear()} {siteName}. All Rights Reserved.</p>
           </div>
         </footer>
 
