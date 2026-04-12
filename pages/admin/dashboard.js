@@ -278,9 +278,19 @@ function OrdersTab() {
                     <td className="px-4 py-3"><span className={`badge ${STATUS_BADGE[o.payment_status] || 'badge-purple'}`}>{o.payment_status}</span></td>
                     <td className="px-4 py-3"><span className={`badge ${STATUS_BADGE[o.order_status] || 'badge-purple'}`}>{o.order_status}</span></td>
                     <td className="px-4 py-3">
+
+                    {o.payment_status === 'paid' && o.order_status !== 'success' && (
+  <button
+    onClick={() => processTV(o.id)}
+    className="text-xs bg-primary/20 text-primary-glow hover:bg-primary/30 px-2 py-1 rounded-lg transition-colors mb-1 w-full"
+  >
+    Proses TV
+  </button>
+)}
                       <select
                         value={o.order_status}
                         onChange={e => updateStatus(o.id, e.target.value)}
+                          
                         className="bg-card-hover border border-border rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-primary"
                       >
                         {['pending','processing','success','failed'].map(s => <option key={s} value={s}>{s}</option>)}
