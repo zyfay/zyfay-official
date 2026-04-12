@@ -314,9 +314,9 @@ export default function TopUpPage() {
               {paymentData ? (
                 <div className="card p-5 mb-5 space-y-4">
                   {/* QRIS Image */}
-                  {paymentData.qr_url && (
+                  {paymentData.qr_image && (
                     <div className="text-center">
-                      <img src={paymentData.qr_url} alt="QRIS" className="w-48 h-48 mx-auto rounded-xl border border-border" />
+                      <img src={paymentData.qr_image} alt="QRIS" className="w-48 h-48 mx-auto rounded-xl border border-border" />
                       <p className="text-muted text-xs mt-2">Scan dengan aplikasi apapun</p>
                     </div>
                   )}
