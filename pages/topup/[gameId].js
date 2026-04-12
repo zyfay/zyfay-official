@@ -313,13 +313,27 @@ export default function TopUpPage() {
 
               {paymentData ? (
                 <div className="card p-5 mb-5 space-y-4">
-                  {/* QRIS Image */}
-                  {paymentData.qr_image && (
-                    <div className="text-center">
-                      <img src={paymentData.qr_image} alt="QRIS" className="w-48 h-48 mx-auto rounded-xl border border-border" />
-                      <p className="text-muted text-xs mt-2">Scan dengan aplikasi apapun</p>
-                    </div>
-                  )}
+                   {/* QRIS */}
+{paymentData.qr_image && (
+  <div className="text-center">
+    <img src={paymentData.qr_image} alt="QRIS" className="w-48 h-48 mx-auto rounded-xl border border-border" />
+    <p className="text-muted text-xs mt-2">Scan dengan aplikasi apapun</p>
+  </div>
+)}
+
+{/* E-Wallet checkout URL */}
+{!paymentData.qr_image && paymentData.checkout_url && (
+  <a href={paymentData.checkout_url} target="_blank" rel="noopener noreferrer" className="btn-primary w-full">
+    Bayar dengan {paymentData.payment_name || paymentCode.toUpperCase()}
+  </a>
+)}
+
+{/* Pay URL alternatif */}
+{!paymentData.qr_image && !paymentData.checkout_url && paymentData.pay_url && (
+  <a href={paymentData.pay_url} target="_blank" rel="noopener noreferrer" className="btn-primary w-full">
+    Bayar dengan {paymentData.payment_name || paymentCode.toUpperCase()}
+  </a>
+)}
 
                   {/* Payment number / VA */}
                   {paymentData.pay_code && (
