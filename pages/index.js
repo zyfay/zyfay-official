@@ -108,7 +108,7 @@ export default function Home() {
             <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
             <input
               type="text"
-              placeholder=" Cari game..."
+              placeholder="Cari game..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="input-field pl-10"
