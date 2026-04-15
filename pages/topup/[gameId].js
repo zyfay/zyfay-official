@@ -244,8 +244,14 @@ export default function TopUpPage() {
 
               <div className="flex gap-3">
                 <button onClick={() => setStep(1)} className="btn-secondary flex-1">Kembali</button>
-                <button onClick={() => setStep(3)} className="btn-primary flex-1">Lanjut</button>
-              </div>
+                      
+              <button onClick={() => {
+  for (const f of (game?.fields || [])) {
+    if (!form[f.name]?.trim()) return toast.error(`${f.label} wajib diisi`);
+  }
+  if (!email?.trim()) return toast.error('Email wajib diisi');
+  setStep(3);
+}} className="btn-primary flex-1">Lanjut</button>
             </div>
           )}
 
