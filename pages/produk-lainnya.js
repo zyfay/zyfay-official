@@ -47,7 +47,7 @@ export default function ProdukLainnya() {
 
   return (
     <>
-      <Head><title>Produk Zyfay Lainnya | {siteName}</title></Head>
+      <Head><title>ZyArena | {siteName}</title></Head>
       <div className="min-h-screen bg-bg">
         <Navbar />
         <div className="max-w-6xl mx-auto px-4 py-8">
