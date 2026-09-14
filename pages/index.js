@@ -149,7 +149,7 @@ export default function Home() {
           <div className="mt-10">
             <div className="flex justify-center mb-4">
               <div className="bg-primary/15 border border-primary/30 text-primary-glow font-display italic font-bold text-lg rounded-full px-6 py-1.5">
-                Produk zyfay lainnya...
+                ZyArena
               </div>
             </div>
 
