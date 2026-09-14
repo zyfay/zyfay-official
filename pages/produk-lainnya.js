@@ -53,8 +53,8 @@ export default function ProdukLainnya() {
         <div className="max-w-6xl mx-auto px-4 py-8">
           <Link href="/" className="btn-ghost text-sm mb-6 inline-flex"><ArrowLeft size={16} /> Kembali</Link>
 
-          <h1 className="font-display text-2xl font-bold mb-1">Produk Zyfay Lainnya</h1>
-          <p className="text-muted text-sm mb-6">Akun game, jasa media sosial, dan produk lain di luar top up game</p>
+          <h1 className="font-display text-2xl font-bold mb-1">ZyArena</h1>
+          <p className="text-muted text-sm mb-6">Semua kebutuhan gaming & sosmed kamu</p>
 
           <div className="relative max-w-md mb-5">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
