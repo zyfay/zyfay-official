@@ -1975,6 +1975,9 @@ function ApiTab() {
   const endpoints = [
     { method: 'GET', path: '/api/app/games', desc: 'List semua game aktif' },
     { method: 'GET', path: '/api/app/products?game_id=xxx', desc: 'List produk sebuah game (kosongkan game_id buat "Produk Lainnya")' },
+    { method: 'GET', path: '/api/app/zyarena?category_id=xxx&q=xxx&page=1&limit=20', desc: 'List produk ZyArena (filter kategori, cari judul, paginasi)' },
+    { method: 'GET', path: '/api/app/zyarena/xxx', desc: 'Detail satu produk ZyArena + foto-fotonya' },
+    { method: 'GET', path: '/api/app/zyarena/categories', desc: 'List kategori ZyArena' },
     { method: 'GET', path: '/api/app/flash-sales', desc: 'List ZySale yang lagi aktif' },
     { method: 'GET', path: '/api/app/banners', desc: 'List banner beranda' },
     { method: 'GET', path: '/api/app/notifications', desc: 'List notifikasi terbaru' },
