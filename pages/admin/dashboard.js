@@ -8,7 +8,7 @@ import {
   LogOut, ExternalLink, Plus, Pencil, Trash2, X, Check,
   Loader2, Send, Upload, Image as ImageIcon, ChevronDown,
   TrendingUp, Users, ShoppingCart, DollarSign, Clock, RefreshCw,
-  CheckCircle, XCircle, AlertCircle, Search, Eye, EyeOff, Zap, Wrench, Flame, Bell, Megaphone, CalendarClock, Images, ArrowLeft, Key, Code, Award, Link as LinkIcon, ZoomIn, Store, Tags, ChevronLeft, ChevronRight, Ticket, Phone, Wifi, WifiOff, Star, Quote
+  CheckCircle, XCircle, AlertCircle, Search, Eye, EyeOff, Zap, Wrench, Flame, Bell, Megaphone, CalendarClock, Images, ArrowLeft, Key, Code, Award, Link as LinkIcon, ZoomIn, Store, Tags, ChevronLeft, ChevronRight, Ticket, Phone, Wifi, WifiOff, Star, Quote, Copy
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
@@ -1915,6 +1915,7 @@ function ApiTab() {
   const [newKey, setNewKey] = useState(null); // key yang baru dibuat, ditampilkan sekali
   const [copiedKey, setCopiedKey] = useState('');
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedAll, setCopiedAll] = useState(false);
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
@@ -1983,7 +1984,7 @@ function ApiTab() {
     { method: 'POST', path: '/api/app/auth/login', desc: 'Login: kirim OTP WhatsApp (identifier nama/email, password, phone)' },
     { method: 'POST', path: '/api/app/auth/verify-login', desc: 'Verifikasi OTP login (phone, code) -> balikin token' },
     { method: 'GET', path: '/api/app/auth/me', desc: 'Profil akun (header Authorization: Bearer <token>)' },
-    { method: 'GET', path: '/api/app/leaderboard?type=buyers&period=all&limit=10', desc: 'Peringkat top pembeli (type=buyers|topups, period=all|month|week)' },
+    { method: 'GET', path: '/api/app/leaderboard?type=buyers&period=all&limit=10&only_members=0', desc: 'Peringkat per akun (type=buyers|topups, period=all|month|week, only_members=1 = tanpa tamu)' },
     { method: 'GET', path: '/api/app/flash-sales', desc: 'List ZySale yang lagi aktif' },
     { method: 'GET', path: '/api/app/banners', desc: 'List banner beranda' },
     { method: 'GET', path: '/api/app/notifications', desc: 'List notifikasi terbaru' },
@@ -1996,6 +1997,72 @@ function ApiTab() {
     { method: 'GET', path: '/api/app/chat/messages?session_id=xxx', desc: 'Ambil pesan chat (polling)' },
     { method: 'POST', path: '/api/app/chat/upload', desc: 'Upload gambar/voice note buat chat' },
   ];
+
+  // ---- Salin semua endpoint (format rapi, siap ditempel ke catatan / chat / dokumentasi) ----
+  async function writeClipboard(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) { /* lanjut ke cara cadangan */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  const GROUP_ORDER = ['Game & Produk', 'ZyArena', 'Akun (Login & Daftar)', 'Peringkat', 'Beranda & Info', 'Pesanan', 'Live Chat'];
+
+  function endpointGroup(path) {
+    if (path.startsWith('/api/app/auth')) return 'Akun (Login & Daftar)';
+    if (path.startsWith('/api/app/zyarena')) return 'ZyArena';
+    if (path.startsWith('/api/app/leaderboard')) return 'Peringkat';
+    if (path.startsWith('/api/app/orders')) return 'Pesanan';
+    if (path.startsWith('/api/app/chat')) return 'Live Chat';
+    if (/^\/api\/app\/(flash-sales|banners|notifications)/.test(path)) return 'Beranda & Info';
+    return 'Game & Produk';
+  }
+
+  function buildEndpointText() {
+    const lines = [
+      'ZYFAY APP API',
+      `Base URL : ${baseUrl}`,
+      'Header   : x-api-key: <API_KEY>',
+      '           Authorization: Bearer <TOKEN>  (khusus endpoint akun yang butuh login)',
+      `Total    : ${endpoints.length} endpoint`,
+      '',
+    ];
+    GROUP_ORDER.forEach(group => {
+      const items = endpoints.filter(e => endpointGroup(e.path) === group);
+      if (!items.length) return;
+      lines.push(`== ${group.toUpperCase()} ==`);
+      items.forEach(e => {
+        lines.push(`${e.method.padEnd(5)} ${e.path}`);
+        lines.push(`      ${e.desc}`);
+      });
+      lines.push('');
+    });
+    return lines.join('\n').trim() + '\n';
+  }
+
+  async function copyAllEndpoints() {
+    const ok = await writeClipboard(buildEndpointText());
+    if (!ok) { toast.error('Gagal menyalin, coba lagi'); return; }
+    setCopiedAll(true);
+    toast.success(`${endpoints.length} endpoint disalin!`);
+    setTimeout(() => setCopiedAll(false), 2000);
+  }
 
   return (
     <div>
@@ -2067,7 +2134,12 @@ function ApiTab() {
       )}
 
       {/* Endpoint docs */}
-      <div className="font-semibold mb-3 flex items-center gap-2"><Code size={16} /> Daftar Endpoint</div>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="font-semibold flex items-center gap-2"><Code size={16} /> Daftar Endpoint <span className="text-muted text-xs font-normal">({endpoints.length})</span></div>
+        <button onClick={copyAllEndpoints} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-primary/15 text-primary-glow hover:bg-primary/25 transition-colors flex-shrink-0">
+          {copiedAll ? <><Check size={14} /> Tersalin</> : <><Copy size={14} /> Salin semua</>}
+        </button>
+      </div>
       <div className="card overflow-hidden mb-6">
         {endpoints.map((e, i) => (
           <div key={i} className={`p-3.5 flex items-start gap-3 ${i !== endpoints.length - 1 ? 'border-b border-border' : ''}`}>
