@@ -62,6 +62,5 @@ export default async function handler(req, res) {
     await supabaseAdmin.from('customers').update({ pin_attempts: 0, pin_locked_until: null }).eq('id', me.id);
   }
 
-  return res.json({ success: true, balance: Number(row.balance)
-|| 0 });
+  return res.json({ success: true, balance: Number(row.balance) || 0 });
 }

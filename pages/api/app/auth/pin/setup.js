@@ -38,6 +38,5 @@ export default async function handler(req, res) {
     .eq('id', me.id);
   if (error) return res.status(500).json({ success: false, message: 'Gagal menyimpan PIN' });
 
-  return res.json({ success: tru
-e });
+  return res.json({ success: true });
 }
