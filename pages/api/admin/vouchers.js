@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { code, discount_percent, valid_days } = req.body;
+    const { code, discount_percent, valid_days, is_public } = req.body;
     if (!code?.trim()) return res.status(400).json({ success: false, message: 'Kode voucher wajib diisi' });
     if (!discount_percent || discount_percent < 1 || discount_percent > 100) {
       return res.status(400).json({ success: false, message: 'Persentase diskon harus 1-100' });
@@ -33,6 +33,7 @@ export default async function handler(req, res) {
         code: code.trim().toUpperCase(),
         discount_percent: parseInt(discount_percent),
         expires_at,
+        ...(typeof is_public === 'boolean' ? { is_public } : {}),
       })
       .select()
       .single();
@@ -45,8 +46,10 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'PUT') {
-    const { id, code, discount_percent, valid_days, is_active } = req.body;
-    const updates = { is_active };
+    const { id, code, discount_percent, valid_days, is_active, is_public } = req.body;
+    const updates = {};
+    if (typeof is_active === 'boolean') updates.is_active = is_active;
+    if (typeof is_public === 'boolean') updates.is_public = is_public; // false = disembunyikan dari app
     if (code) updates.code = code.trim().toUpperCase();
     if (discount_percent) updates.discount_percent = parseInt(discount_percent);
     if (valid_days) updates.expires_at = new Date(Date.now() + parseInt(valid_days) * 24 * 60 * 60 * 1000).toISOString();
