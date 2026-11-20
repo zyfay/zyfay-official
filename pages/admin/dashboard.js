@@ -1984,7 +1984,10 @@ function ApiTab() {
     { method: 'POST', path: '/api/app/auth/login', desc: 'Login: kirim OTP WhatsApp (identifier nama/email, password, phone)' },
     { method: 'POST', path: '/api/app/auth/verify-login', desc: 'Verifikasi OTP login (phone, code) -> balikin token' },
     { method: 'GET', path: '/api/app/auth/me', desc: 'Profil akun (header Authorization: Bearer <token>)' },
+    { method: 'POST', path: '/api/app/auth/pin/setup', desc: 'Buat/ganti PIN 6 digit (pin, current_pin kalau ganti) - butuh Bearer token' },
+    { method: 'POST', path: '/api/app/auth/pin/verify', desc: 'Cek PIN (pin) -> balikin saldo. Salah 5x dikunci 15 menit - butuh Bearer token' },
     { method: 'GET', path: '/api/app/leaderboard?type=buyers&period=all&limit=10&only_members=0', desc: 'Peringkat per akun (type=buyers|topups, period=all|month|week, only_members=1 = tanpa tamu)' },
+    { method: 'GET', path: '/api/app/vouchers', desc: 'List voucher aktif yang belum kedaluwarsa (is_public=false disembunyikan)' },
     { method: 'GET', path: '/api/app/flash-sales', desc: 'List ZySale yang lagi aktif' },
     { method: 'GET', path: '/api/app/banners', desc: 'List banner beranda' },
     { method: 'GET', path: '/api/app/notifications', desc: 'List notifikasi terbaru' },
@@ -2022,12 +2025,13 @@ function ApiTab() {
     } catch (e) { return false; }
   }
 
-  const GROUP_ORDER = ['Game & Produk', 'ZyArena', 'Akun (Login & Daftar)', 'Peringkat', 'Beranda & Info', 'Pesanan', 'Live Chat'];
+  const GROUP_ORDER = ['Game & Produk', 'ZyArena', 'Akun (Login & Daftar)', 'Peringkat', 'Voucher', 'Beranda & Info', 'Pesanan', 'Live Chat'];
 
   function endpointGroup(path) {
     if (path.startsWith('/api/app/auth')) return 'Akun (Login & Daftar)';
     if (path.startsWith('/api/app/zyarena')) return 'ZyArena';
     if (path.startsWith('/api/app/leaderboard')) return 'Peringkat';
+    if (path.startsWith('/api/app/vouchers')) return 'Voucher';
     if (path.startsWith('/api/app/orders')) return 'Pesanan';
     if (path.startsWith('/api/app/chat')) return 'Live Chat';
     if (/^\/api\/app\/(flash-sales|banners|notifications)/.test(path)) return 'Beranda & Info';
