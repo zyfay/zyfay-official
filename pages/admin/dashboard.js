@@ -2824,6 +2824,18 @@ function VoucherTab() {
     load();
   }
 
+  async function togglePublic(v) {
+    const next = v.is_public === false; // false -> tampilkan, selain itu -> sembunyikan
+    const res = await fetch('/api/admin/vouchers', {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: v.id, is_public: next }),
+    }).then(r => r.json()).catch(() => null);
+    if (!res?.success) { toast.error(res?.message || 'Gagal mengubah tampilan voucher'); return; }
+    toast.success(next ? 'Voucher tampil di app' : 'Voucher disembunyikan dari app');
+    load();
+  }
+
   function statusOf(v) {
     if (!v.is_active) return { label: 'Nonaktif', cls: 'badge-danger' };
     if (new Date(v.expires_at) < new Date()) return { label: 'Kedaluwarsa', cls: 'badge-danger' };
@@ -2849,7 +2861,7 @@ function VoucherTab() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead><tr className="border-b border-border">
-                {['Kode', 'Diskon', 'Berlaku Sampai', 'Terpakai', 'Status', 'Aksi'].map(h => (
+                {['Kode', 'Diskon', 'Berlaku Sampai', 'Terpakai', 'Status', 'Di App', 'Aksi'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-muted text-xs font-medium uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
@@ -2863,6 +2875,15 @@ function VoucherTab() {
                       <td className="px-4 py-3 text-xs text-muted whitespace-nowrap">{new Date(v.expires_at).toLocaleString('id-ID')}</td>
                       <td className="px-4 py-3 text-sm whitespace-nowrap">{v.usage_count}x</td>
                       <td className="px-4 py-3"><span className={`badge ${st.cls}`}>{st.label}</span></td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => togglePublic(v)}
+                          title={v.is_public === false ? 'Disembunyikan dari app, klik untuk tampilkan' : 'Tampil di app, klik untuk sembunyikan'}
+                          className={`w-10 h-5 rounded-full transition-colors ${v.is_public !== false ? 'bg-primary' : 'bg-border'}`}
+                        >
+                          <div className={`w-4 h-4 bg-white rounded-full mx-0.5 transition-transform ${v.is_public !== false ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </button>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1.5">
                           <button onClick={() => toggleActive(v)} className="w-8 h-8 bg-card-hover rounded-lg flex items-center justify-center hover:bg-primary/20 hover:text-primary-glow transition-colors" title={v.is_active ? 'Nonaktifkan' : 'Aktifkan'}>
@@ -2880,7 +2901,7 @@ function VoucherTab() {
                   );
                 })}
                 {vouchers.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center text-muted">Belum ada voucher</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-muted">Belum ada voucher</td></tr>
                 )}
               </tbody>
             </table>
@@ -2906,6 +2927,7 @@ function VoucherModal({ voucher, onClose, onSaved }) {
     discount_percent: voucher?.discount_percent || '',
     valid_days: 7,
     is_active: voucher?.is_active !== false,
+    is_public: voucher?.is_public !== false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -2977,6 +2999,15 @@ function VoucherModal({ voucher, onClose, onSaved }) {
               <div className={`w-4 h-4 bg-white rounded-full mx-0.5 transition-transform ${form.is_active ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
             <span className="text-sm">Aktif</span>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setForm(f => ({ ...f, is_public: !f.is_public }))} className={`w-10 h-5 rounded-full transition-colors ${form.is_public ? 'bg-primary' : 'bg-border'}`}>
+                <div className={`w-4 h-4 bg-white rounded-full mx-0.5 transition-transform ${form.is_public ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+              <span className="text-sm">Tampil di app</span>
+            </div>
+            <p className="text-muted text-xs mt-1">Matikan buat voucher khusus. Kodenya nggak muncul di daftar voucher app, tapi tetap bisa dipakai kalau kodenya dimasukkan manual.</p>
           </div>
         </div>
         <div className="flex gap-3 p-5 border-t border-border">
