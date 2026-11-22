@@ -13,6 +13,14 @@ export const config = { maxDuration: 60 };
 const truthy = v => v === true || v === '1' || v === 'true' || v === 1;
 const num = (v, d) => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
 const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+// Produk yang BUKAN barang dagangan: "Cek Nama Akun Dana", "Cek Status Voucher ...", "Cek Hutang Pulsa ..."
+// (harganya cuma Rp 4-10 per cek), transfer pulsa, dan apa pun yang modalnya di bawah Rp 500.
+function specialReason(nama, cost) {
+  if (/\bcek\b/i.test(nama)) return 'cek';
+  if (/\btransfer\b/i.test(nama)) return 'transfer';
+  if (cost > 0 && cost < 500) return 'terlalu-murah';
+  return null;
+}
 const plainObj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 
 export default async function handler(req, res) {
@@ -56,7 +64,8 @@ export default async function handler(req, res) {
   // ---- 2) Klasifikasi tiap produk ----
   const candidates = []; // { group, row }
   const seen = new Set();
-  const stat = { total_tv: (d.produk || []).length, skipped_no_code: 0, skipped_no_price: 0, skipped_duplicate: 0, not_ppob: 0 };
+  const stat = { total_tv: (d.produk || []).length, skipped_no_code: 0, skipped_no_price: 0, skipped_duplicate: 0, skipped_special: 0, not_ppob: 0 };
+  const specialItems = []; // contoh produk yang dilewati (kode + alasan), buat dicek di Preview
   const byGroup = {}, catSeen = {};
 
   for (const p of d.produk || []) {
@@ -76,6 +85,12 @@ export default async function handler(req, res) {
 
     const g = PPOB_GROUPS[gid];
     const cost = Math.round(Number(p.price) || 0);
+    const special = g.postpaid ? null : specialReason(String(p.nama || ''), cost);
+    if (special) {
+      stat.skipped_special++;
+      if (specialItems.length < 60) specialItems.push({ code: code, name: p.nama, modal: cost, alasan: special });
+      continue;
+    }
     if (cost <= 0 && !g.postpaid) { stat.skipped_no_price++; continue; }
     seen.add(code.toLowerCase());
 
@@ -111,6 +126,7 @@ export default async function handler(req, res) {
   const summary = {
     margin: { percent: margin.marginPercent, flat: margin.marginFlat, round_to: margin.roundTo },
     tokovoucher: stat,
+    skipped_special_items: specialItems,
     groups: byGroup,
     categories_seen: Object.entries(catSeen).map(([nama, v]) => ({ nama, ...v })).sort((a, b) => b.total - a.total),
   };
