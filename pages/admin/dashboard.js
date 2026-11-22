@@ -2098,6 +2098,7 @@ function ApiTab() {
     { method: 'POST', path: '/api/app/auth/pin/verify', desc: 'Cek PIN (pin) -> balikin saldo. Salah 5x dikunci 15 menit - butuh Bearer token' },
     { method: 'GET', path: '/api/app/leaderboard?type=buyers&period=all&limit=10&only_members=0', desc: 'Peringkat per akun (type=buyers|topups, period=all|month|week, only_members=1 = tanpa tamu)' },
     { method: 'GET', path: '/api/app/vouchers', desc: 'List voucher aktif yang belum kedaluwarsa (is_public=false disembunyikan)' },
+    { method: 'GET', path: '/api/app/ppob/tagihan?game_id=ppob-tagihan-pln', desc: 'Daftar produk tagihan pascabayar (game_id opsional) -> id dipakai di inquiry' },
     { method: 'POST', path: '/api/app/ppob/inquiry', desc: 'Cek tagihan pascabayar PLN/PDAM/BPJS/internet (product_id, customer_no). Nominal dihitung server' },
     { method: 'POST', path: '/api/app/ppob/bayar', desc: 'Bayar tagihan dari hasil inquiry (inquiry_id, user_email, payment_method?) -> data pembayaran' },
     { method: 'POST', path: '/api/app/ppob/cek-pelanggan', desc: 'Cek nama pelanggan PLN token / e-wallet (type, number). Belum tersedia: balas supported:false' },
