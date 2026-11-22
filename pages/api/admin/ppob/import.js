@@ -1,122 +1,176 @@
-// pages/admin/ppob-import.js
-// Halaman admin buat impor produk PPOB dari TokoVoucher (nyaman dipakai dari HP).
-// Buka: /admin/ppob-import  (harus sudah login admin)
-import { useState } from 'react';
-import Head from 'next/head';
-import { Loader2, Eye, Download, ArrowLeft } from 'lucide-react';
+// pages/api/admin/ppob/import.js
+// Impor produk PPOB dari TokoVoucher ke tabel products (game_id: ppob-pulsa, ppob-paket-data, dst).
+//   GET  /api/admin/ppob/import            -> PREVIEW saja (tidak menulis apa pun)
+//   POST /api/admin/ppob/import            -> body: { preview?, margin_percent?, margin_flat?, round_to?, update_prices? }
+// Hanya admin (cookie admin_token).
+import { getAdmin } from '../../../../lib/auth';
+import { supabaseAdmin } from '../../../../lib/supabase';
+import { tv, isTvIpBlocked } from '../../../../lib/tokovoucher';
+import { PPOB_GROUPS, classifyProduct, sellPrice } from '../../../../lib/ppob';
 
-const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+export const config = { maxDuration: 60 };
 
-export default function PpobImport() {
-  const [form, setForm] = useState({ margin_percent: '3', margin_flat: '0', round_to: '100', update_prices: false });
-  const [busy, setBusy] = useState('');
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
+const truthy = v => v === true || v === '1' || v === 'true' || v === 1;
+const num = (v, d) => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
+const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+const plainObj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 
-  async function run(preview) {
-    if (!preview && !window.confirm('Impor produk ke database sekarang? Produk yang sudah ada tidak dihapus.')) return;
-    setBusy(preview ? 'preview' : 'import');
-    setError('');
-    try {
-      const res = await fetch('/api/admin/ppob/import', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, preview }),
-      });
-      const data = await res.json().catch(() => null);
-      if (res.status === 401) { setError('Belum login admin. Login dulu di /admin/login lalu buka halaman ini lagi.'); setResult(null); }
-      else if (!data) { setError(`Server membalas tidak valid (HTTP ${res.status})`); setResult(null); }
-      else { if (!data.success) setError(data.message || 'Gagal'); setResult(data); }
-    } catch (e) {
-      setError('Gagal menghubungi server: ' + e.message);
-    }
-    setBusy('');
+export default async function handler(req, res) {
+  if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
+
+  const admin = await getAdmin(req);
+  if (!admin) return res.status(401).json({ success: false, message: 'Unauthorized: login admin dulu' });
+  if (!tv.isConfigured()) return res.status(400).json({ success: false, message: 'TokoVoucher belum dikonfigurasi (env TOKOVOUCHER_*)' });
+
+  const src = req.method === 'POST' ? (req.body || {}) : req.query;
+  const preview = req.method === 'GET' || truthy(src.preview);
+  const margin = {
+    marginPercent: num(src.margin_percent, 3),
+    marginFlat: num(src.margin_flat, 0),
+    roundTo: Math.max(1, num(src.round_to, 100)),
+  };
+  const updatePrices = truthy(src.update_prices);
+
+  // ---- 1) Ambil semua data produk dari TokoVoucher ----
+  let full;
+  try {
+    full = await tv.getFullProducts();
+  } catch (e) {
+    return res.status(502).json({ success: false, message: 'Gagal menghubungi TokoVoucher: ' + e.message });
+  }
+  if (isTvIpBlocked(full)) {
+    return res.status(502).json({
+      success: false, code: 'tv_ip_not_allowed',
+      message: 'TokoVoucher menolak: IP server belum di-whitelist ("Ip Not Allow"). Daftar produk harus diambil dari IP yang sudah diizinkan.',
+    });
+  }
+  if (Number(full?.status) !== 1 || !full?.data) {
+    return res.status(502).json({ success: false, message: 'Respons TokoVoucher tidak valid: ' + (full?.error_msg || full?.message || 'tanpa pesan') });
   }
 
-  const field = (key, label, hint) => (
-    <label className="block">
-      <span className="text-sm font-medium">{label}</span>
-      <input
-        inputMode="decimal"
-        value={form[key]}
-        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-        className="input-field mt-1"
-      />
-      <span className="text-muted text-xs">{hint}</span>
-    </label>
-  );
+  const d = full.data;
+  const byId = list => new Map((list || []).map(x => [Number(x.id), x]));
+  const cats = byId(d.category), ops = byId(d.operator), jenisMap = byId(d.jenis);
+  const now = new Date().toISOString();
 
-  return (
-    <>
-      <Head><title>Impor Produk PPOB | Zyfay Admin</title></Head>
-      <div className="min-h-screen bg-bg text-white px-4 py-6">
-        <div className="max-w-xl mx-auto space-y-4">
-          <a href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-muted text-sm"><ArrowLeft size={14} /> Dashboard</a>
-          <h1 className="font-display text-2xl font-bold">Impor Produk PPOB</h1>
-          <p className="text-muted text-sm">
-            Ambil pulsa, paket data, token PLN, e-wallet, voucher hiburan, dan tagihan dari TokoVoucher ke tabel produk
-            (game_id <code>ppob-*</code>). Mulai dari <b>Preview</b> dulu, tidak ada yang ditulis.
-          </p>
+  // ---- 2) Klasifikasi tiap produk ----
+  const candidates = []; // { group, row }
+  const seen = new Set();
+  const stat = { total_tv: (d.produk || []).length, skipped_no_code: 0, skipped_no_price: 0, skipped_duplicate: 0, not_ppob: 0 };
+  const byGroup = {}, catSeen = {};
 
-          <div className="card p-4 space-y-3">
-            {field('margin_percent', 'Margin (%)', 'Ditambahkan ke harga modal, mis. 3')}
-            {field('margin_flat', 'Margin tetap (Rp)', 'Ditambahkan setelah margin %, mis. 0 atau 500')}
-            {field('round_to', 'Pembulatan ke atas (Rp)', 'Harga jual dibulatkan ke kelipatan ini, mis. 100')}
-            <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" checked={form.update_prices} onChange={e => setForm(f => ({ ...f, update_prices: e.target.checked }))} className="mt-1" />
-              <span>Perbarui harga produk yang SUDAH ada<br /><span className="text-muted text-xs">Biarkan mati kalau lo pernah ubah harga manual, supaya tidak tertimpa.</span></span>
-            </label>
-          </div>
+  for (const p of d.produk || []) {
+    const cat = cats.get(Number(p.kategori_id)) || { nama: `kategori ${p.kategori_id}`, id: p.kategori_id };
+    const op = ops.get(Number(p.operator_id)) || {};
+    const jn = jenisMap.get(Number(p.jenis_id)) || {};
+    const cs = (catSeen[cat.nama] ||= { total: 0, ppob: 0 });
+    cs.total++;
 
-          <div className="flex gap-3">
-            <button onClick={() => run(true)} disabled={!!busy} className="btn-secondary flex-1 flex items-center justify-center gap-2">
-              {busy === 'preview' ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />} Preview
-            </button>
-            <button onClick={() => run(false)} disabled={!!busy} className="btn-primary flex-1 flex items-center justify-center gap-2">
-              {busy === 'import' ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Impor
-            </button>
-          </div>
+    const gid = classifyProduct({ category: cat, operator: op, jenis: jn, produk: p });
+    if (!gid) { stat.not_ppob++; continue; }
+    cs.ppob++;
 
-          {error && <div className="card p-3 text-sm text-red-400">{error}</div>}
+    const code = String(p.kode_produk || '').trim();
+    if (!code) { stat.skipped_no_code++; continue; }
+    if (seen.has(code.toLowerCase())) { stat.skipped_duplicate++; continue; }
 
-          {result?.groups && (
-            <div className="card p-4 space-y-3">
-              <div className="font-semibold">
-                {result.mode === 'import'
-                  ? `Selesai: ${result.inserted} baru, ${result.updated} diperbarui, ${result.unchanged} tetap`
-                  : `Preview: ${result.to_import} produk siap diimpor (dari ${result.tokovoucher?.total_tv} produk TokoVoucher)`}
-              </div>
-              {result.errors?.length > 0 && <div className="text-red-400 text-xs">{result.errors.join(' | ')}</div>}
-              <div className="divide-y divide-border">
-                {Object.entries(result.groups).map(([id, g]) => (
-                  <div key={id} className="py-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="font-medium">{g.name}{g.postpaid ? ' (pascabayar)' : ''}</span>
-                      <span className="text-muted">{g.total} produk</span>
-                    </div>
-                    <div className="text-muted text-xs">{id}</div>
-                    {g.sample.map(s => (
-                      <div key={s.code} className="text-xs text-muted flex justify-between">
-                        <span>{s.code} · {s.name}</span>
-                        <span>{g.postpaid ? 'nominal via inquiry' : `${rupiah(s.modal)} → ${rupiah(s.jual)}`}</span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-              <details>
-                <summary className="text-sm cursor-pointer">Kategori di TokoVoucher ({result.categories_seen?.length})</summary>
-                <div className="mt-2 text-xs text-muted space-y-0.5">
-                  {result.categories_seen?.map(c => (
-                    <div key={c.nama} className="flex justify-between"><span>{c.nama}</span><span>{c.ppob}/{c.total} masuk PPOB</span></div>
-                  ))}
-                </div>
-              </details>
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  );
+    const g = PPOB_GROUPS[gid];
+    const cost = Math.round(Number(p.price) || 0);
+    if (cost <= 0 && !g.postpaid) { stat.skipped_no_price++; continue; }
+    seen.add(code.toLowerCase());
+
+    const tvActive = Number(p.status) === 1 && Number(op.status ?? 1) === 1 && Number(jn.status ?? 1) === 1;
+    const row = {
+      name: p.nama,
+      description: p.deskripsi || null,
+      category: g.category,
+      game_id: gid,
+      game_name: g.name,
+      publisher: op.nama || null,
+      image_url: op.logo || null,
+      tv_code: code,
+      price: g.postpaid ? 0 : sellPrice(cost, margin),
+      original_price: 0,
+      is_active: g.postpaid ? false : tvActive,   // pascabayar selalu nonaktif di katalog biasa
+      sort_order: 0,
+      metadata: {
+        source: 'tokovoucher', ppob: true, is_postpaid: !!g.postpaid,
+        tv_price: cost, tv_active: tvActive, tv_product_id: p.id,
+        tv_category: cat.nama, tv_operator: op.nama || null, tv_jenis: jn.nama || null,
+        auto_deactivated: !tvActive && !g.postpaid,   // nonaktif karena TokoVoucher menutupnya -> aktif lagi otomatis saat dibuka
+        synced_at: now,
+      },
+    };
+    candidates.push({ gid, row, cost });
+    const bg = (byGroup[gid] ||= { name: g.name, postpaid: !!g.postpaid, total: 0, active: 0, sample: [] });
+    bg.total++;
+    if (row.is_active) bg.active++;
+    if (bg.sample.length < 3) bg.sample.push({ code, name: row.name, modal: cost, jual: row.price });
+  }
+
+  const summary = {
+    margin: { percent: margin.marginPercent, flat: margin.marginFlat, round_to: margin.roundTo },
+    tokovoucher: stat,
+    groups: byGroup,
+    categories_seen: Object.entries(catSeen).map(([nama, v]) => ({ nama, ...v })).sort((a, b) => b.total - a.total),
+  };
+
+  if (preview) {
+    return res.json({ success: true, mode: 'preview', message: 'Preview saja, belum ada data yang ditulis.', ...summary, to_import: candidates.length });
+  }
+
+  // ---- 3) Lihat produk yang sudah ada (berdasarkan tv_code) ----
+  const existing = new Map();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from('products').select('id, tv_code, game_id, price, is_active, metadata')
+      .not('tv_code', 'is', null).range(from, from + 999);
+    if (error) return res.status(500).json({ success: false, message: 'Gagal membaca produk: ' + error.message });
+    data.forEach(r => existing.set(String(r.tv_code).toLowerCase(), r));
+    if (data.length < 1000) break;
+  }
+
+  // Urutan tampil: termurah dulu di tiap grup
+  const rank = {};
+  candidates.sort((a, b) => a.cost - b.cost).forEach(c => { rank[c.gid] = (rank[c.gid] || 0) + 1; c.row.sort_order = rank[c.gid] * 10; });
+
+  const toInsert = [], toUpdate = [];
+  let unchanged = 0, skippedOther = 0;
+  for (const { row } of candidates) {
+    const ex = existing.get(row.tv_code.toLowerCase());
+    if (!ex) { toInsert.push(row); continue; }
+    if (!String(ex.game_id || '').startsWith('ppob-')) { skippedOther++; continue; } // kode ini milik katalog game: jangan disentuh
+
+    const exMeta = plainObj(ex.metadata);
+    const patch = {};
+    const meta = { ...exMeta, ...row.metadata, auto_deactivated: exMeta.auto_deactivated || false };
+    const tvActive = row.metadata.tv_active;
+    if (!tvActive && ex.is_active) { patch.is_active = false; meta.auto_deactivated = true; }          // TokoVoucher menutup produk
+    if (tvActive && !ex.is_active && exMeta.auto_deactivated && !row.metadata.is_postpaid) { patch.is_active = true; meta.auto_deactivated = false; }
+    if (updatePrices && !row.metadata.is_postpaid && row.price !== ex.price) patch.price = row.price;
+    const metaChanged = exMeta.tv_price !== row.metadata.tv_price || exMeta.tv_active !== tvActive || exMeta.ppob !== true || meta.auto_deactivated !== !!exMeta.auto_deactivated;
+    if (metaChanged) patch.metadata = meta;
+    if (Object.keys(patch).length) toUpdate.push({ id: ex.id, patch }); else unchanged++;
+  }
+
+  // ---- 4) Tulis ke database ----
+  const errors = [];
+  let inserted = 0, updated = 0;
+  for (const part of chunk(toInsert, 300)) {
+    const { error } = await supabaseAdmin.from('products').insert(part);
+    if (error) errors.push('insert: ' + error.message); else inserted += part.length;
+  }
+  for (const part of chunk(toUpdate, 25)) {
+    const results = await Promise.all(part.map(u =>
+      supabaseAdmin.from('products').update({ ...u.patch, updated_at: new Date().toISOString() }).eq('id', u.id)));
+    results.forEach(r => { if (r.error) errors.push('update: ' + r.error.message); else updated++; });
+  }
+
+  return res.status(errors.length && !inserted && !updated ? 500 : 200).json({
+    success: errors.length === 0 || inserted + updated > 0,
+    mode: 'import',
+    inserted, updated, unchanged, skipped_other_catalog: skippedOther,
+    errors: errors.slice(0, 5),
+    ...summary,
+  });
 }
