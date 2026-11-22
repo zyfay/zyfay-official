@@ -8,7 +8,7 @@ import {
   LogOut, ExternalLink, Plus, Pencil, Trash2, X, Check,
   Loader2, Send, Upload, Image as ImageIcon, ChevronDown,
   TrendingUp, Users, ShoppingCart, DollarSign, Clock, RefreshCw,
-  CheckCircle, XCircle, AlertCircle, Search, Eye, EyeOff, Zap, Wrench, Flame, Bell, Megaphone, CalendarClock, Images, ArrowLeft, Key, Code, Award, Link as LinkIcon, ZoomIn, Store, Tags, ChevronLeft, ChevronRight, Ticket, Phone, Wifi, WifiOff, Star, Quote, Copy
+  CheckCircle, XCircle, AlertCircle, Search, Eye, EyeOff, Zap, Wrench, Flame, Bell, Megaphone, CalendarClock, Images, ArrowLeft, Key, Code, Award, Link as LinkIcon, ZoomIn, Store, Tags, ChevronLeft, ChevronRight, Ticket, Phone, Wifi, WifiOff, Star, Quote, Copy, Download
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
@@ -20,6 +20,7 @@ const TABS = [
   { id: 'orders',    label: 'Pesanan',     icon: ShoppingCart },
   { id: 'products',  label: 'Produk',      icon: Package },
   { id: 'shop',      label: 'Produk Lainnya', icon: Store },
+  { id: 'ppob',      label: 'PPOB',        icon: Zap },
   { id: 'games',     label: 'Games',       icon: Gamepad2 },
   { id: 'chat',      label: 'Live Chat',   icon: MessageSquare },
   { id: 'banner',    label: 'Banner',      icon: Images },
@@ -130,6 +131,7 @@ export default function Dashboard() {
             {tab === 'orders'    && <OrdersTab />}
             {tab === 'products'  && <ProductsTab />}
             {tab === 'shop'      && <ShopTab />}
+            {tab === 'ppob'      && <PpobTab />}
             {tab === 'voucher'   && <VoucherTab />}
             {tab === 'games'     && <GamesTab />}
             {tab === 'chat'      && <ChatTab />}
@@ -1906,6 +1908,114 @@ function BannerModal({ banner, onClose, onSaved }) {
 // ============================================================
 // API & APP TAB — API keys for native app integration
 // ============================================================
+function PpobTab() {
+  const [form, setForm] = useState({ margin_percent: '3', margin_flat: '0', round_to: '100', update_prices: false });
+  const [busy, setBusy] = useState('');
+  const [result, setResult] = useState(null);
+  const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+
+  async function run(preview) {
+    if (!preview && !window.confirm('Impor produk ke database sekarang? Produk yang sudah ada tidak dihapus.')) return;
+    setBusy(preview ? 'preview' : 'import');
+    try {
+      const res = await fetch('/api/admin/ppob/import', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, preview }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.status === 401) toast.error('Sesi admin habis, login lagi');
+      else if (!data) toast.error(`Server membalas tidak valid (HTTP ${res.status})`);
+      else {
+        setResult(data);
+        if (!data.success) toast.error(data.message || 'Gagal');
+        else toast.success(preview ? 'Preview selesai' : `Impor selesai: ${data.inserted} produk baru`);
+      }
+    } catch (e) {
+      toast.error('Gagal menghubungi server');
+    }
+    setBusy('');
+  }
+
+  const field = (key, label, hint) => (
+    <label className="block">
+      <span className="text-sm font-medium">{label}</span>
+      <input inputMode="decimal" value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} className="input-field mt-1" />
+      <span className="text-muted text-xs">{hint}</span>
+    </label>
+  );
+
+  return (
+    <div className="max-w-xl">
+      <h1 className="font-display text-2xl font-bold mb-2">PPOB</h1>
+      <p className="text-muted text-sm mb-5">
+        Impor pulsa, paket data, token PLN, e-wallet, voucher hiburan, dan tagihan dari TokoVoucher ke tabel produk
+        (game_id <code>ppob-*</code>). Mulai dari <b>Preview</b> dulu, tidak ada data yang ditulis.
+      </p>
+
+      <div className="card p-4 space-y-3 mb-4">
+        {field('margin_percent', 'Margin (%)', 'Ditambahkan ke harga modal, mis. 3')}
+        {field('margin_flat', 'Margin tetap (Rp)', 'Ditambahkan setelah margin %, mis. 0 atau 500')}
+        {field('round_to', 'Pembulatan ke atas (Rp)', 'Harga jual dibulatkan ke kelipatan ini, mis. 100')}
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" checked={form.update_prices} onChange={e => setForm(f => ({ ...f, update_prices: e.target.checked }))} className="mt-1" />
+          <span>Perbarui harga produk yang SUDAH ada<br /><span className="text-muted text-xs">Biarkan mati kalau lo pernah ubah harga manual, supaya tidak tertimpa.</span></span>
+        </label>
+      </div>
+
+      <div className="flex gap-3 mb-4">
+        <button onClick={() => run(true)} disabled={!!busy} className="btn-secondary flex-1 flex items-center justify-center gap-2">
+          {busy === 'preview' ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />} Preview
+        </button>
+        <button onClick={() => run(false)} disabled={!!busy} className="btn-primary flex-1 flex items-center justify-center gap-2">
+          {busy === 'import' ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Impor
+        </button>
+      </div>
+
+      {result && !result.groups && !result.success && (
+        <div className="card p-3 text-sm text-red-400 mb-4">{result.message}</div>
+      )}
+
+      {result?.groups && (
+        <div className="card p-4 space-y-3">
+          <div className="font-semibold">
+            {result.mode === 'import'
+              ? `Selesai: ${result.inserted} baru, ${result.updated} diperbarui, ${result.unchanged} tetap`
+              : `Preview: ${result.to_import} produk siap diimpor (dari ${result.tokovoucher?.total_tv} produk TokoVoucher)`}
+          </div>
+          {result.errors?.length > 0 && <div className="text-red-400 text-xs">{result.errors.join(' | ')}</div>}
+          <div className="divide-y divide-border">
+            {Object.entries(result.groups).map(([id, g]) => (
+              <div key={id} className="py-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="font-medium">{g.name}{g.postpaid ? ' (pascabayar)' : ''}</span>
+                  <span className="text-muted">{g.total} produk</span>
+                </div>
+                <div className="text-muted text-xs">{id}</div>
+                {g.sample.map(s => (
+                  <div key={s.code} className="text-xs text-muted flex justify-between gap-3">
+                    <span className="truncate">{s.code} · {s.name}</span>
+                    <span className="flex-shrink-0">{g.postpaid ? 'nominal via inquiry' : `${rupiah(s.modal)} → ${rupiah(s.jual)}`}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <details>
+            <summary className="text-sm cursor-pointer">Kategori di TokoVoucher ({result.categories_seen?.length})</summary>
+            <div className="mt-2 text-xs text-muted space-y-0.5">
+              {result.categories_seen?.map(c => (
+                <div key={c.nama} className="flex justify-between"><span>{c.nama}</span><span>{c.ppob}/{c.total} masuk PPOB</span></div>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ApiTab() {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1988,6 +2098,9 @@ function ApiTab() {
     { method: 'POST', path: '/api/app/auth/pin/verify', desc: 'Cek PIN (pin) -> balikin saldo. Salah 5x dikunci 15 menit - butuh Bearer token' },
     { method: 'GET', path: '/api/app/leaderboard?type=buyers&period=all&limit=10&only_members=0', desc: 'Peringkat per akun (type=buyers|topups, period=all|month|week, only_members=1 = tanpa tamu)' },
     { method: 'GET', path: '/api/app/vouchers', desc: 'List voucher aktif yang belum kedaluwarsa (is_public=false disembunyikan)' },
+    { method: 'POST', path: '/api/app/ppob/inquiry', desc: 'Cek tagihan pascabayar PLN/PDAM/BPJS/internet (product_id, customer_no). Nominal dihitung server' },
+    { method: 'POST', path: '/api/app/ppob/bayar', desc: 'Bayar tagihan dari hasil inquiry (inquiry_id, user_email, payment_method?) -> data pembayaran' },
+    { method: 'POST', path: '/api/app/ppob/cek-pelanggan', desc: 'Cek nama pelanggan PLN token / e-wallet (type, number). Belum tersedia: balas supported:false' },
     { method: 'GET', path: '/api/app/flash-sales', desc: 'List ZySale yang lagi aktif' },
     { method: 'GET', path: '/api/app/banners', desc: 'List banner beranda' },
     { method: 'GET', path: '/api/app/notifications', desc: 'List notifikasi terbaru' },
@@ -2025,13 +2138,14 @@ function ApiTab() {
     } catch (e) { return false; }
   }
 
-  const GROUP_ORDER = ['Game & Produk', 'ZyArena', 'Akun (Login & Daftar)', 'Peringkat', 'Voucher', 'Beranda & Info', 'Pesanan', 'Live Chat'];
+  const GROUP_ORDER = ['Game & Produk', 'ZyArena', 'Akun (Login & Daftar)', 'Peringkat', 'Voucher', 'PPOB', 'Beranda & Info', 'Pesanan', 'Live Chat'];
 
   function endpointGroup(path) {
     if (path.startsWith('/api/app/auth')) return 'Akun (Login & Daftar)';
     if (path.startsWith('/api/app/zyarena')) return 'ZyArena';
     if (path.startsWith('/api/app/leaderboard')) return 'Peringkat';
     if (path.startsWith('/api/app/vouchers')) return 'Voucher';
+    if (path.startsWith('/api/app/ppob')) return 'PPOB';
     if (path.startsWith('/api/app/orders')) return 'Pesanan';
     if (path.startsWith('/api/app/chat')) return 'Live Chat';
     if (/^\/api\/app\/(flash-sales|banners|notifications)/.test(path)) return 'Beranda & Info';
