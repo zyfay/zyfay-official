@@ -1909,6 +1909,164 @@ function BannerModal({ banner, onClose, onSaved }) {
 // API & APP TAB — API keys for native app integration
 // ============================================================
 function PpobTab() {
+  const [view, setView] = useState('produk');
+  return (
+    <div className="max-w-2xl">
+      <h1 className="font-display text-2xl font-bold mb-4">PPOB</h1>
+      <div className="flex gap-2 mb-5">
+        {[['produk', 'Produk'], ['impor', 'Impor dari TokoVoucher']].map(([id, label]) => (
+          <button key={id} onClick={() => setView(id)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${view === id ? 'bg-primary text-white' : 'bg-card text-muted hover:text-white'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'produk' ? <PpobProducts onGoImport={() => setView('impor')} /> : <PpobImport />}
+    </div>
+  );
+}
+
+function PpobProducts({ onGoImport }) {
+  const [groups, setGroups] = useState([]);
+  const [group, setGroup] = useState('');
+  const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState({ products: [], pagination: { total: 0, pages: 1 } });
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // { id, value }
+  const [savingId, setSavingId] = useState('');
+  const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedQ(q.trim()); setPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  async function load(withGroups) {
+    setLoading(true);
+    const params = new URLSearchParams({ page: String(page), limit: '30' });
+    if (group) params.set('group', group);
+    if (debouncedQ) params.set('q', debouncedQ);
+    if (withGroups) params.set('groups', '1');
+    const res = await fetch(`/api/admin/ppob/products?${params}`, { credentials: 'include' }).then(r => r.json()).catch(() => null);
+    if (!res?.success) { toast.error(res?.message || 'Gagal memuat produk PPOB'); setLoading(false); return; }
+    setData(res);
+    if (res.groups) setGroups(res.groups);
+    setLoading(false);
+  }
+
+  useEffect(() => { load(groups.length === 0); }, [group, debouncedQ, page]);
+
+  async function save(p, patch, force) {
+    setSavingId(p.id);
+    const res = await fetch('/api/admin/ppob/products', {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: p.id, ...patch, ...(force ? { force: true } : {}) }),
+    }).then(r => r.json()).catch(() => null);
+    setSavingId('');
+    if (res?.code === 'below_cost') {
+      if (window.confirm(res.message + '\nTetap simpan?')) return save(p, patch, true);
+      return;
+    }
+    if (!res?.success) { toast.error(res?.message || 'Gagal menyimpan'); return; }
+    toast.success('Tersimpan');
+    setEditing(null);
+    load(true);
+  }
+
+  const totalAll = groups.reduce((n, g) => n + g.total, 0);
+  const { products, pagination } = data;
+
+  return (
+    <div>
+      {/* Grup */}
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-3">
+        {[{ game_id: '', name: 'Semua', total: totalAll }, ...groups].map(g => (
+          <button key={g.game_id || 'all'} onClick={() => { setGroup(g.game_id); setPage(1); }}
+            className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors ${group === g.game_id ? 'bg-primary text-white' : 'bg-card text-muted hover:text-white'}`}>
+            {g.name} <span className="opacity-70">{g.total}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Cari */}
+      <div className="relative mb-4">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama atau kode produk..." className="input-field pl-10" />
+      </div>
+
+      {loading && products.length === 0 ? (
+        <div className="flex justify-center py-10"><Loader2 className="animate-spin text-muted" /></div>
+      ) : products.length === 0 ? (
+        <div className="card p-6 text-center text-muted text-sm">
+          {groups.length === 0 ? (
+            <>Belum ada produk PPOB.<br /><button onClick={onGoImport} className="text-primary-glow underline mt-2">Impor dari TokoVoucher dulu</button></>
+          ) : 'Tidak ada produk yang cocok.'}
+        </div>
+      ) : (
+        <div className={`space-y-2 ${loading ? 'opacity-60' : ''}`}>
+          {products.map(p => {
+            const margin = p.modal > 0 ? Math.round(((p.price - p.modal) / p.modal) * 1000) / 10 : null;
+            const isEditing = editing?.id === p.id;
+            return (
+              <div key={p.id} className="card p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-sm truncate">{p.name}</div>
+                    <div className="text-muted text-xs truncate">{p.tv_code} · {p.publisher || '-'}</div>
+
+                    {p.is_postpaid ? (
+                      <div className="text-xs text-muted mt-1">Tagihan: nominal dari inquiry, diatur otomatis</div>
+                    ) : isEditing ? (
+                      <div className="flex items-center gap-2 mt-2">
+                        <input inputMode="numeric" autoFocus value={editing.value}
+                          onChange={e => setEditing({ id: p.id, value: e.target.value.replace(/[^0-9]/g, '') })}
+                          onKeyDown={e => { if (e.key === 'Enter') save(p, { price: Number(editing.value) }); if (e.key === 'Escape') setEditing(null); }}
+                          className="input-field w-32 py-1.5" />
+                        <button onClick={() => save(p, { price: Number(editing.value) })} disabled={savingId === p.id || !editing.value}
+                          className="btn-primary text-xs px-3 py-1.5">{savingId === p.id ? <Loader2 size={13} className="animate-spin" /> : 'Simpan'}</button>
+                        <button onClick={() => setEditing(null)} className="text-muted text-xs">Batal</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setEditing({ id: p.id, value: String(p.price) })} className="text-left mt-1">
+                        <span className="text-xs text-muted">Modal {rupiah(p.modal)} → </span>
+                        <span className="font-semibold text-sm">{rupiah(p.price)}</span>
+                        {margin !== null && <span className={`text-xs ml-1 ${margin < 0 ? 'text-red-400' : 'text-muted'}`}>({margin}%)</span>}
+                        <Pencil size={12} className="inline ml-1.5 text-muted" />
+                      </button>
+                    )}
+                    {!p.tv_active && <span className="badge badge-danger mt-1 inline-block">Ditutup TokoVoucher</span>}
+                  </div>
+
+                  {!p.is_postpaid && (
+                    <button onClick={() => save(p, { is_active: !p.is_active })} disabled={savingId === p.id}
+                      title={p.is_active ? 'Aktif, klik untuk matikan' : 'Nonaktif, klik untuk nyalakan'}
+                      className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 mt-1 ${p.is_active ? 'bg-primary' : 'bg-border'}`}>
+                      <div className={`w-4 h-4 bg-white rounded-full mx-0.5 transition-transform ${p.is_active ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Halaman */}
+      {pagination.pages > 1 && (
+        <div className="flex items-center justify-between mt-4 text-sm">
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || loading} className="btn-secondary px-3 py-1.5 flex items-center gap-1 text-xs"><ChevronLeft size={14} /> Sebelumnya</button>
+          <span className="text-muted text-xs">Halaman {page} dari {pagination.pages} · {pagination.total} produk</span>
+          <button onClick={() => setPage(p => Math.min(pagination.pages, p + 1))} disabled={page >= pagination.pages || loading} className="btn-secondary px-3 py-1.5 flex items-center gap-1 text-xs">Berikutnya <ChevronRight size={14} /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PpobImport() {
   const [form, setForm] = useState({ margin_percent: '3', margin_flat: '0', round_to: '100', update_prices: false });
   const [busy, setBusy] = useState('');
   const [result, setResult] = useState(null);
@@ -1948,7 +2106,6 @@ function PpobTab() {
 
   return (
     <div className="max-w-xl">
-      <h1 className="font-display text-2xl font-bold mb-2">PPOB</h1>
       <p className="text-muted text-sm mb-5">
         Impor pulsa, paket data, token PLN, e-wallet, voucher hiburan, dan tagihan dari TokoVoucher ke tabel produk
         (game_id <code>ppob-*</code>). Mulai dari <b>Preview</b> dulu, tidak ada data yang ditulis.
