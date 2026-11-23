@@ -21,6 +21,7 @@ const TABS = [
   { id: 'products',  label: 'Produk',      icon: Package },
   { id: 'shop',      label: 'Produk Lainnya', icon: Store },
   { id: 'ppob',      label: 'PPOB',        icon: Zap },
+  { id: 'gamesync',  label: 'Sinkron Game', icon: RefreshCw },
   { id: 'games',     label: 'Games',       icon: Gamepad2 },
   { id: 'chat',      label: 'Live Chat',   icon: MessageSquare },
   { id: 'banner',    label: 'Banner',      icon: Images },
@@ -132,6 +133,7 @@ export default function Dashboard() {
             {tab === 'products'  && <ProductsTab />}
             {tab === 'shop'      && <ShopTab />}
             {tab === 'ppob'      && <PpobTab />}
+            {tab === 'gamesync'  && <GameSyncTab />}
             {tab === 'voucher'   && <VoucherTab />}
             {tab === 'games'     && <GamesTab />}
             {tab === 'chat'      && <ChatTab />}
@@ -1908,6 +1910,250 @@ function BannerModal({ banner, onClose, onSaved }) {
 // ============================================================
 // API & APP TAB — API keys for native app integration
 // ============================================================
+function GameSyncTab() {
+  const [cfg, setCfg] = useState({ margin_percent: '3', margin_flat: '300', round_to: '100', auto_add: true });
+  const [games, setGames] = useState([]);
+  const [edits, setEdits] = useState({});          // { [gameId]: { pct, flat } } margin per game yang belum disimpan
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [result, setResult] = useState(null);
+  const [bust, setBust] = useState(0);
+  const [uploadingId, setUploadingId] = useState('');
+  const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+
+  const api = (method, body) => fetch('/api/admin/game-sync', {
+    method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+  }).then(r => r.json().then(j => ({ status: r.status, ...j }))).catch(() => null);
+
+  async function load() {
+    const res = await api('GET');
+    if (!res?.success) { toast.error(res?.message || 'Gagal memuat'); setLoading(false); return; }
+    setCfg({ margin_percent: String(res.config.margin_percent), margin_flat: String(res.config.margin_flat), round_to: String(res.config.round_to), auto_add: res.config.auto_add });
+    setGames(res.games);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  // Contoh hitungan harga jual (rumus sama dengan server)
+  const jual = c => {
+    const raw = c * (1 + (Number(cfg.margin_percent) || 0) / 100) + (Number(cfg.margin_flat) || 0);
+    const step = Math.max(1, Number(cfg.round_to) || 1);
+    return Math.max(c, Math.ceil(raw / step) * step);
+  };
+
+  async function saveGlobal() {
+    setBusy('save');
+    const res = await api('PUT', { margin_percent: cfg.margin_percent, margin_flat: cfg.margin_flat, round_to: cfg.round_to, auto_add: cfg.auto_add });
+    setBusy('');
+    if (!res?.success) { toast.error(res?.message || 'Gagal menyimpan'); return false; }
+    toast.success('Margin tersimpan');
+    load();
+    return true;
+  }
+
+  async function saveGame(id, patch) {
+    const res = await api('PUT', { per_game: { [id]: patch } });
+    if (!res?.success) { toast.error(res?.message || 'Gagal menyimpan'); return; }
+    toast.success('Tersimpan');
+    setEdits(e => { const n = { ...e }; delete n[id]; return n; });
+    load();
+  }
+
+  async function run(preview, applyAnomalies) {
+    if (!preview) {
+      if (!window.confirm(applyAnomalies ? 'Terapkan juga perubahan harga yang besar (di atas 35%)?' : 'Sinkron sekarang? Harga dan produk game akan diperbarui dari TokoVoucher.')) return;
+      if (!(await saveGlobal())) return;
+    }
+    setBusy(preview ? 'preview' : 'sync');
+    const res = await api('POST', { preview, apply_anomalies: !!applyAnomalies });
+    setBusy('');
+    if (!res) { toast.error('Gagal menghubungi server'); return; }
+    if (res.status === 401) { toast.error('Sesi admin habis, login lagi'); return; }
+    setResult(res);
+    if (!res.success) toast.error(res.message || 'Gagal');
+    else if (!preview) { toast.success(`Selesai: ${res.written.updated} diperbarui, ${res.written.inserted} produk baru`); load(); }
+  }
+
+  async function useOperator(gameId, operatorId) {
+    const res = await api('PUT', { mapping: { [gameId]: [operatorId] } });
+    if (!res?.success) { toast.error(res?.message || 'Gagal'); return; }
+    toast.success('Operator dihubungkan');
+    run(true, false);
+  }
+
+  function uploadPhoto(g, file) {
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) { toast.error('Foto maksimal 3 MB'); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setUploadingId(g.id);
+      const res = await fetch('/api/admin/games', {
+        method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: g.id, image_base64: reader.result, image_name: file.name }),
+      }).then(r => r.json()).catch(() => null);
+      setUploadingId('');
+      if (!res?.success) { toast.error(res?.message || 'Gagal upload foto'); return; }
+      toast.success('Foto diganti');
+      setBust(Date.now());
+      load();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  const field = (key, label, hint) => (
+    <label className="block">
+      <span className="text-sm font-medium">{label}</span>
+      <input inputMode="decimal" value={cfg[key]} onChange={e => setCfg(c => ({ ...c, [key]: e.target.value }))} className="input-field mt-1" />
+      <span className="text-muted text-xs">{hint}</span>
+    </label>
+  );
+
+  const t = result?.totals;
+  const active = (result?.games || []).filter(g => !g.enabled || g.suggestions?.length || g.stats.up + g.stats.down + g.stats.new + g.stats.deactivated + g.stats.reactivated + g.stats.anomalies > 0);
+
+  return (
+    <div className="max-w-2xl">
+      <h1 className="font-display text-2xl font-bold mb-2">Sinkron Game</h1>
+      <p className="text-muted text-sm mb-5">
+        Harga dan produk game and voucher mengikuti TokoVoucher otomatis: harga = modal + margin, produk baru ditambah,
+        produk yang ditutup dimatikan. Lo cukup atur <b>margin</b> dan <b>foto</b>.
+      </p>
+
+      {/* Margin global */}
+      <div className="card p-4 space-y-3 mb-4">
+        <div className="font-semibold">Margin untuk semua game</div>
+        {field('margin_percent', 'Margin (%)', 'Untung berupa persen dari modal. Saran: 2 sampai 3')}
+        {field('margin_flat', 'Margin tetap (Rp)', 'Untung rupiah tetap per produk. Saran: 200 sampai 300 (menutup biaya tetap pembayaran)')}
+        {field('round_to', 'Pembulatan ke atas (Rp)', 'Harga dibulatkan ke kelipatan ini, mis. 100')}
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" checked={cfg.auto_add} onChange={e => setCfg(c => ({ ...c, auto_add: e.target.checked }))} className="mt-1" />
+          <span>Tambah produk baru dari TokoVoucher otomatis<br /><span className="text-muted text-xs">Hanya untuk game yang sudah terhubung ke operator TokoVoucher.</span></span>
+        </label>
+        <div className="text-xs text-muted bg-card rounded-lg p-3">
+          Contoh: modal {rupiah(10000)} → jual <b className="text-white">{rupiah(jual(10000))}</b> · modal {rupiah(100000)} → jual <b className="text-white">{rupiah(jual(100000))}</b>
+        </div>
+        <button onClick={saveGlobal} disabled={!!busy} className="btn-secondary w-full text-sm py-2">
+          {busy === 'save' ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Simpan margin'}
+        </button>
+      </div>
+
+      <div className="flex gap-3 mb-4">
+        <button onClick={() => run(true)} disabled={!!busy} className="btn-secondary flex-1 flex items-center justify-center gap-2">
+          {busy === 'preview' ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />} Preview
+        </button>
+        <button onClick={() => run(false)} disabled={!!busy} className="btn-primary flex-1 flex items-center justify-center gap-2">
+          {busy === 'sync' ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Sinkron sekarang
+        </button>
+      </div>
+
+      {/* Hasil */}
+      {result && !result.totals && <div className="card p-3 text-sm text-red-400 mb-4">{result.message}</div>}
+      {t && (
+        <div className="card p-4 space-y-3 mb-4">
+          <div className="font-semibold">{result.mode === 'sync' ? 'Hasil sinkron' : 'Preview (belum ada yang diubah)'}</div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {[['Harga naik', t.up], ['Harga turun', t.down], ['Produk baru', t.new], ['Dimatikan', t.deactivated], ['Hidup lagi', t.reactivated], ['Ditahan', t.anomalies]].map(([l, v]) => (
+              <div key={l} className="bg-card rounded-lg py-2"><div className="font-bold">{v}</div><div className="text-muted text-[11px]">{l}</div></div>
+            ))}
+          </div>
+          {result.errors?.length > 0 && <div className="text-red-400 text-xs">{result.errors.join(' | ')}</div>}
+          {t.anomalies > 0 && (
+            <div className="text-xs text-muted">
+              "Ditahan" = perubahan harga lebih dari {result.anomaly_limit_percent}% (bisa karena harga TokoVoucher error atau harga lama lo jauh beda). Cek daftarnya di bawah.
+              <button onClick={() => run(false, true)} disabled={!!busy} className="block mt-2 text-primary-glow underline">Terapkan juga perubahan besar</button>
+            </div>
+          )}
+          <div className="divide-y divide-border">
+            {active.map(g => (
+              <div key={g.game_id} className="py-2 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium">{g.name}</span>
+                  <span className="text-muted text-xs text-right">
+                    {!g.enabled ? 'sinkron dimatikan' : [g.stats.up && `${g.stats.up} naik`, g.stats.down && `${g.stats.down} turun`, g.stats.new && `${g.stats.new} baru`, g.stats.deactivated && `${g.stats.deactivated} dimatikan`, g.stats.reactivated && `${g.stats.reactivated} hidup`, g.stats.anomalies && `${g.stats.anomalies} ditahan`].filter(Boolean).join(' · ')}
+                  </span>
+                </div>
+                {g.operators?.length > 0 && <div className="text-muted text-xs">Operator: {g.operators.join(', ')}</div>}
+                {g.samples?.map(s => (
+                  <div key={s.code} className="text-xs text-muted flex justify-between gap-3">
+                    <span className="truncate">{s.code} · {s.name}</span>
+                    <span className="flex-shrink-0">{s.old != null ? `${rupiah(s.old)} → ` : 'baru '}{rupiah(s.new)}</span>
+                  </div>
+                ))}
+                {g.anomalies?.map(a => (
+                  <div key={a.code} className="text-xs text-red-300 flex justify-between gap-3">
+                    <span className="truncate">Ditahan: {a.code} · {a.name}</span>
+                    <span className="flex-shrink-0">{rupiah(a.old)} → {rupiah(a.new)} (modal {rupiah(a.modal)})</span>
+                  </div>
+                ))}
+                {g.suggestions?.length > 0 && (
+                  <div className="mt-1 text-xs">
+                    <div className="text-muted">Belum terhubung ke TokoVoucher. Pakai operator:</div>
+                    {g.suggestions.map(s => (
+                      <button key={s.operator_id} onClick={() => useOperator(g.game_id, s.operator_id)} className="mr-2 mt-1 px-2.5 py-1 rounded-full bg-primary/15 text-primary-glow">
+                        {s.name} ({s.products} produk)
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="text-muted text-xs">{result.games.length - active.length} game lain tidak ada perubahan.</div>
+        </div>
+      )}
+
+      {/* Daftar game: foto & margin khusus */}
+      <div className="font-semibold mb-2">Foto & margin per game</div>
+      {loading ? (
+        <div className="flex justify-center py-8"><Loader2 className="animate-spin text-muted" /></div>
+      ) : (
+        <div className="space-y-2">
+          {games.map(g => {
+            const e = edits[g.id];
+            const dirty = !!e;
+            const pct = e ? e.pct : (g.margin.custom_percent ?? '');
+            const flat = e ? e.flat : (g.margin.custom_flat ?? '');
+            return (
+              <div key={g.id} className="card p-3">
+                <div className="flex items-center gap-3">
+                  <label className="relative w-14 h-14 rounded-lg bg-card overflow-hidden flex-shrink-0 flex items-center justify-center cursor-pointer">
+                    {g.image_url ? <img src={`${g.image_url}${g.image_url.includes('?') ? '&' : '?'}v=${bust}`} alt="" className="w-full h-full object-cover" /> : <Upload size={18} className="text-muted" />}
+                    {uploadingId === g.id && <div className="absolute inset-0 bg-black/60 flex items-center justify-center"><Loader2 size={16} className="animate-spin" /></div>}
+                    <input type="file" accept="image/*" className="hidden" onChange={ev => { uploadPhoto(g, ev.target.files?.[0]); ev.target.value = ''; }} />
+                  </label>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-sm truncate">{g.name}</div>
+                    <div className="text-muted text-xs">{g.products} produk · {g.category} · tap foto buat ganti</div>
+                  </div>
+                  <button onClick={() => saveGame(g.id, { enabled: !g.margin.enabled })}
+                    title={g.margin.enabled ? 'Sinkron aktif, klik untuk matikan' : 'Sinkron dimatikan, klik untuk aktifkan'}
+                    className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 ${g.margin.enabled ? 'bg-primary' : 'bg-border'}`}>
+                    <div className={`w-4 h-4 bg-white rounded-full mx-0.5 transition-transform ${g.margin.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+                <div className="flex items-end gap-2 mt-3">
+                  <label className="flex-1">
+                    <span className="text-[11px] text-muted">Margin % khusus</span>
+                    <input inputMode="decimal" value={pct} placeholder={String(cfg.margin_percent)}
+                      onChange={ev => setEdits(x => ({ ...x, [g.id]: { pct: ev.target.value, flat } }))} className="input-field py-1.5 text-sm" />
+                  </label>
+                  <label className="flex-1">
+                    <span className="text-[11px] text-muted">Margin tetap (Rp) khusus</span>
+                    <input inputMode="decimal" value={flat} placeholder={String(cfg.margin_flat)}
+                      onChange={ev => setEdits(x => ({ ...x, [g.id]: { pct, flat: ev.target.value } }))} className="input-field py-1.5 text-sm" />
+                  </label>
+                  {dirty && <button onClick={() => saveGame(g.id, { margin_percent: e.pct === '' ? null : e.pct, margin_flat: e.flat === '' ? null : e.flat })} className="btn-primary text-xs px-3 py-2">Simpan</button>}
+                </div>
+                <div className="text-[11px] text-muted mt-1">Kosongkan = pakai margin semua game ({g.margin.percent}% + {rupiah(g.margin.flat)})</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PpobTab() {
   const [view, setView] = useState('produk');
   return (
