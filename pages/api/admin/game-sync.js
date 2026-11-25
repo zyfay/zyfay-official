@@ -3,6 +3,7 @@
 //   GET   -> pengaturan margin + daftar game (foto, jumlah produk, margin yang berlaku)
 //   PUT   -> simpan pengaturan: { margin_percent?, margin_flat?, round_to?, auto_add?, per_game?: {id: {...}|null}, mapping?: {id: [operator_id]|null} }
 //   POST  -> { preview?: true, apply_anomalies?: false }  preview = hitung saja; tanpa preview = tulis ke database
+//   POST  -> { action: 'operators', q: 'free fire' }            cari operator TokoVoucher (untuk menghubungkan game manual)
 //   POST  -> { action: 'games_preview' }                          daftar game baru di TokoVoucher yang belum ada di toko
 //   POST  -> { action: 'games_import', operator_ids: [..], active?: false }  buat game baru + produknya
 import { getAdmin } from '../../../lib/auth';
@@ -113,6 +114,17 @@ export default async function handler(req, res) {
 
     const cfg = await loadConfig();
     const index = buildTvIndex(full);
+
+    // Cari operator TokoVoucher berdasarkan nama (untuk menghubungkan game secara manual)
+    if (body.action === 'operators') {
+      const q = String(body.q || '').toLowerCase().trim();
+      if (q.length < 2) return res.status(400).json({ success: false, message: 'Ketik minimal 2 huruf' });
+      const list = index.operators
+        .filter(o => `${o.name} ${o.category}`.toLowerCase().includes(q))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        .slice(0, 40);
+      return res.json({ success: true, mode: 'operators', operators: list });
+    }
     const { data: games, error: gErr } = await supabaseAdmin.from('games').select('id, name, publisher, category, is_active, sort_order').order('sort_order');
     if (gErr) return res.status(500).json({ success: false, message: gErr.message });
     const products = await allProducts();
