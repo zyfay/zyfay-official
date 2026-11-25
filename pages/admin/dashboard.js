@@ -1922,6 +1922,9 @@ function GameSyncTab() {
   const [found, setFound] = useState(null);        // hasil "Cari game baru"
   const [picked, setPicked] = useState({});        // { [operator_id]: true }
   const [activeNow, setActiveNow] = useState(false);
+  const [linkFor, setLinkFor] = useState('');       // id game yang sedang dihubungkan manual
+  const [opQuery, setOpQuery] = useState('');
+  const [opResults, setOpResults] = useState(null);
   const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
   const api = (method, body) => fetch('/api/admin/game-sync', {
@@ -1975,6 +1978,24 @@ function GameSyncTab() {
     setResult(res);
     if (!res.success) toast.error(res.message || 'Gagal');
     else if (!preview) { toast.success(`Selesai: ${res.written.updated} diperbarui, ${res.written.inserted} produk baru`); load(); }
+  }
+
+  async function searchOperators() {
+    setBusy('ops');
+    const res = await api('POST', { action: 'operators', q: opQuery });
+    setBusy('');
+    if (!res?.success) { toast.error(res?.message || 'Gagal mencari operator'); return; }
+    setOpResults(res.operators);
+  }
+
+  async function linkOperator(gameId, operatorId) {
+    const res = await api('PUT', { mapping: { [gameId]: [operatorId] } });
+    if (!res?.success) { toast.error(res?.message || 'Gagal'); return; }
+    toast.success('Terhubung. Tekan Sinkron sekarang untuk mengisi produknya');
+    setLinkFor('');
+    setOpQuery('');
+    setOpResults(null);
+    run(true, false);
   }
 
   async function useOperator(gameId, operatorId) {
@@ -2234,6 +2255,24 @@ function GameSyncTab() {
                   {dirty && <button onClick={() => saveGame(g.id, { margin_percent: e.pct === '' ? null : e.pct, margin_flat: e.flat === '' ? null : e.flat })} className="btn-primary text-xs px-3 py-2">Simpan</button>}
                 </div>
                 <div className="text-[11px] text-muted mt-1">Kosongkan = pakai margin semua game ({g.margin.percent}% + {rupiah(g.margin.flat)})</div>
+                <button onClick={() => { setLinkFor(linkFor === g.id ? '' : g.id); setOpQuery(g.name); setOpResults(null); }} className="text-xs text-primary-glow mt-2 underline">
+                  {g.products === 0 ? 'Hubungkan ke operator TokoVoucher' : 'Ganti operator TokoVoucher'}
+                </button>
+                {linkFor === g.id && (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex gap-2">
+                      <input value={opQuery} onChange={ev => setOpQuery(ev.target.value)} onKeyDown={ev => { if (ev.key === 'Enter') searchOperators(); }} placeholder="Cari nama di TokoVoucher, mis. free fire" className="input-field py-1.5 text-sm flex-1" />
+                      <button onClick={searchOperators} disabled={!!busy} className="btn-secondary text-xs px-3">{busy === 'ops' ? <Loader2 size={13} className="animate-spin" /> : 'Cari'}</button>
+                    </div>
+                    {opResults && opResults.length === 0 && <div className="text-xs text-muted">Tidak ketemu. Coba kata lain (mis. "ff", "garena", "max").</div>}
+                    {opResults?.map(o => (
+                      <button key={o.id} onClick={() => linkOperator(g.id, o.id)} className="w-full text-left bg-card rounded-lg px-3 py-2 text-sm flex justify-between gap-3">
+                        <span className="truncate">{o.name}<span className="text-muted text-xs"> · {o.category}</span></span>
+                        <span className="text-muted text-xs flex-shrink-0">{o.products} produk</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
