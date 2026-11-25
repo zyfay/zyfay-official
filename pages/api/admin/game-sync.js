@@ -3,10 +3,12 @@
 //   GET   -> pengaturan margin + daftar game (foto, jumlah produk, margin yang berlaku)
 //   PUT   -> simpan pengaturan: { margin_percent?, margin_flat?, round_to?, auto_add?, per_game?: {id: {...}|null}, mapping?: {id: [operator_id]|null} }
 //   POST  -> { preview?: true, apply_anomalies?: false }  preview = hitung saja; tanpa preview = tulis ke database
+//   POST  -> { action: 'games_preview' }                          daftar game baru di TokoVoucher yang belum ada di toko
+//   POST  -> { action: 'games_import', operator_ids: [..], active?: false }  buat game baru + produknya
 import { getAdmin } from '../../../lib/auth';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { tv, isTvIpBlocked } from '../../../lib/tokovoucher';
-import { mergeConfig, marginFor, buildTvIndex, planGame, ANOMALY_RATIO } from '../../../lib/gamesync';
+import { mergeConfig, marginFor, buildTvIndex, planGame, planNewGames, buildNewGame, ANOMALY_RATIO } from '../../../lib/gamesync';
 
 export const config = { maxDuration: 60 };
 
@@ -119,6 +121,40 @@ export default async function handler(req, res) {
     products.forEach(p => { if (p.game_id && !p.game_id.startsWith('ppob-')) (byGame[p.game_id] ||= []).push(p); });
 
     const plans = (games || []).map(g => planGame({ game: g, products: byGame[g.id] || [], tv: index, cfg, claimed, applyAnomalies }));
+
+    // ---- Game baru dari TokoVoucher ----
+    if (body.action === 'games_preview' || body.action === 'games_import') {
+      const linked = new Set(plans.flatMap(p => p.operator_ids));
+      const found = planNewGames({ tv: index, games: games || [], linkedOperatorIds: linked, cfg, claimed });
+      if (body.action === 'games_preview') {
+        return res.json({
+          success: true, mode: 'games_preview',
+          candidates: found.candidates.map(c => ({ operator_id: c.operator_id, name: c.name, logo: c.logo, category: c.category, tv_category: c.tv_category, products: c.products, slug: c.slug, fields: c.fields.map(f => f.label).join(' + ') })),
+          similar: found.similar, skipped_categories: found.skipped_categories,
+        });
+      }
+      const wanted = Array.isArray(body.operator_ids) ? [...new Set(body.operator_ids.map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 300) : [];
+      if (!wanted.length) return res.status(400).json({ success: false, message: 'Pilih minimal satu game' });
+      const picked = found.candidates.filter(c => wanted.includes(c.operator_id)); // hanya kandidat yang memang valid dari data TokoVoucher terbaru
+      if (!picked.length) return res.status(400).json({ success: false, message: 'Game yang dipilih sudah ada atau tidak valid' });
+      const active = body.active === true;
+      const maxSort = (games || []).reduce((m, g) => Math.max(m, Number(g.sort_order) || 0), 0);
+      const built = picked.map((c, i) => buildNewGame(c, maxSort + i + 1, active));
+
+      const { error: insErr } = await supabaseAdmin.from('games').insert(built.map(b => b.game));
+      if (insErr) return res.status(500).json({ success: false, message: 'Gagal membuat game: ' + insErr.message });
+      const errors = []; let createdProducts = 0;
+      for (const part of chunk(built.flatMap(b => b.products), 200)) {
+        const { error } = await supabaseAdmin.from('products').insert(part);
+        if (error) errors.push('produk: ' + error.message); else createdProducts += part.length;
+      }
+      return res.json({
+        success: true, mode: 'games_import', active,
+        created_games: built.length, created_products: createdProducts, ignored: wanted.length - picked.length,
+        games: built.map(b => ({ id: b.game.id, name: b.game.name, category: b.game.category, products: b.products.length, fields: b.game.fields.map(f => f.label).join(' + ') })),
+        errors: errors.slice(0, 5),
+      });
+    }
     const totals = plans.reduce((t, p) => {
       for (const k of ['up', 'down', 'unchanged', 'new', 'deactivated', 'reactivated', 'anomalies', 'missing']) t[k] += p.stats[k];
       return t;
