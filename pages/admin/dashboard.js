@@ -1919,6 +1919,9 @@ function GameSyncTab() {
   const [result, setResult] = useState(null);
   const [bust, setBust] = useState(0);
   const [uploadingId, setUploadingId] = useState('');
+  const [found, setFound] = useState(null);        // hasil "Cari game baru"
+  const [picked, setPicked] = useState({});        // { [operator_id]: true }
+  const [activeNow, setActiveNow] = useState(false);
   const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
   const api = (method, body) => fetch('/api/admin/game-sync', {
@@ -1979,6 +1982,29 @@ function GameSyncTab() {
     if (!res?.success) { toast.error(res?.message || 'Gagal'); return; }
     toast.success('Operator dihubungkan');
     run(true, false);
+  }
+
+  async function findGames() {
+    setBusy('find');
+    const res = await api('POST', { action: 'games_preview' });
+    setBusy('');
+    if (!res?.success) { toast.error(res?.message || 'Gagal mencari game'); return; }
+    setFound(res);
+    setPicked({});
+  }
+
+  async function importGames() {
+    const ids = Object.keys(picked).filter(k => picked[k]).map(Number);
+    if (!ids.length) { toast.error('Pilih minimal satu game'); return; }
+    if (!window.confirm(`Impor ${ids.length} game baru ${activeNow ? 'dan LANGSUNG AKTIF di aplikasi' : '(nonaktif dulu, aktifkan setelah dicek)'}?`)) return;
+    setBusy('import');
+    const res = await api('POST', { action: 'games_import', operator_ids: ids, active: activeNow });
+    setBusy('');
+    if (!res?.success) { toast.error(res?.message || 'Gagal mengimpor'); return; }
+    toast.success(`${res.created_games} game dan ${res.created_products} produk dibuat`);
+    setFound(null);
+    setPicked({});
+    load();
   }
 
   function uploadPhoto(g, file) {
@@ -2101,6 +2127,69 @@ function GameSyncTab() {
           <div className="text-muted text-xs">{result.games.length - active.length} game lain tidak ada perubahan.</div>
         </div>
       )}
+
+      {/* Game baru dari TokoVoucher */}
+      <div className="card p-4 space-y-3 mb-4">
+        <div className="font-semibold">Game baru dari TokoVoucher</div>
+        <p className="text-muted text-xs">Cari game (mobile, PC, voucher) di TokoVoucher yang belum ada di toko, lalu impor sekaligus dengan produk dan fotonya. Foto bisa diganti setelahnya.</p>
+        <button onClick={findGames} disabled={!!busy} className="btn-secondary w-full text-sm py-2 flex items-center justify-center gap-2">
+          {busy === 'find' ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Cari game baru
+        </button>
+
+        {found && found.candidates.length === 0 && <div className="text-muted text-sm text-center py-2">Tidak ada game baru. Semua sudah ada di toko.</div>}
+
+        {found && found.candidates.length > 0 && (
+          <div className="space-y-3">
+            {['mobile', 'pc', 'voucher'].map(cat => {
+              const items = found.candidates.filter(c => c.category === cat);
+              if (!items.length) return null;
+              const allOn = items.every(c => picked[c.operator_id]);
+              return (
+                <div key={cat}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold uppercase text-muted">{cat} ({items.length})</span>
+                    <button onClick={() => setPicked(p => { const n = { ...p }; items.forEach(c => { n[c.operator_id] = !allOn; }); return n; })} className="text-xs text-primary-glow">{allOn ? 'Batal semua' : 'Pilih semua'}</button>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {items.map(c => (
+                      <label key={c.operator_id} className="flex items-center gap-3 py-2 cursor-pointer">
+                        <input type="checkbox" checked={!!picked[c.operator_id]} onChange={e => setPicked(p => ({ ...p, [c.operator_id]: e.target.checked }))} />
+                        <div className="w-9 h-9 rounded-lg bg-card overflow-hidden flex-shrink-0">{c.logo && <img src={c.logo} alt="" className="w-full h-full object-cover" />}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm truncate">{c.name}</div>
+                          <div className="text-muted text-xs">{c.products} produk · input: {c.fields}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={activeNow} onChange={e => setActiveNow(e.target.checked)} className="mt-1" />
+              <span>Langsung aktifkan di aplikasi<br /><span className="text-muted text-xs">Biarkan mati dulu. TokoVoucher tidak memberi tahu kolom input tiap game (Zone/Server ID), jadi kolomnya tebakan. Cek dulu lalu aktifkan, supaya pesanan tidak gagal.</span></span>
+            </label>
+            <button onClick={importGames} disabled={!!busy} className="btn-primary w-full flex items-center justify-center gap-2">
+              {busy === 'import' ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Impor {Object.values(picked).filter(Boolean).length || ''} game terpilih
+            </button>
+          </div>
+        )}
+
+        {found?.similar?.length > 0 && (
+          <div className="text-xs text-muted">
+            Tidak ditawarkan karena namanya mirip game yang sudah ada (hubungkan lewat tombol "Pakai" di hasil Preview): {found.similar.map(s => `${s.name} ≈ ${s.mirip}`).join(', ')}
+          </div>
+        )}
+        {found?.skipped_categories?.length > 0 && (
+          <details>
+            <summary className="text-xs text-muted cursor-pointer">Kategori TokoVoucher yang dilewati ({found.skipped_categories.length})</summary>
+            <div className="mt-1 text-xs text-muted space-y-0.5">
+              {found.skipped_categories.map(c => <div key={c.name} className="flex justify-between"><span>{c.name}</span><span>{c.products} produk</span></div>)}
+            </div>
+          </details>
+        )}
+      </div>
 
       {/* Daftar game: foto & margin khusus */}
       <div className="font-semibold mb-2">Foto & margin per game</div>
