@@ -1923,6 +1923,8 @@ function GameSyncTab() {
   const [picked, setPicked] = useState({});        // { [operator_id]: true }
   const [activeNow, setActiveNow] = useState(false);
   const [linkFor, setLinkFor] = useState('');       // id game yang sedang dihubungkan manual
+  const [srvFor, setSrvFor] = useState('');         // id game yang pilihan servernya sedang diedit
+  const [srvText, setSrvText] = useState('');
   const [opQuery, setOpQuery] = useState('');
   const [opResults, setOpResults] = useState(null);
   const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -1980,6 +1982,28 @@ function GameSyncTab() {
     else if (!preview) { toast.success(`Selesai: ${res.written.updated} diperbarui, ${res.written.inserted} produk baru`); load(); }
   }
 
+  const optLine = o => (o.hint ? `${o.value}|${o.label}|${o.hint}` : o.label !== o.value ? `${o.value}|${o.label}` : o.value);
+  const parseOptLines = txt => txt.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const [value, label, hint] = l.split('|').map(x => x.trim());
+    return hint ? { value, label: label || value, hint } : { value, label: label || value };
+  });
+
+  function openServer(g) {
+    if (srvFor === g.id) { setSrvFor(''); return; }
+    setSrvFor(g.id);
+    setSrvText((g.server?.options || []).map(optLine).join('\n'));
+  }
+
+  async function saveServer(g) {
+    setBusy('srv');
+    const res = await api('POST', { action: 'set_server_options', game_id: g.id, options: parseOptLines(srvText) });
+    setBusy('');
+    if (!res?.success) { toast.error(res?.message || 'Gagal menyimpan'); return; }
+    toast.success(res.options ? `${res.options} pilihan server tersimpan` : 'Kolom server jadi teks biasa');
+    setSrvFor('');
+    load();
+  }
+
   async function searchOperators() {
     setBusy('ops');
     const res = await api('POST', { action: 'operators', q: opQuery });
@@ -2022,7 +2046,7 @@ function GameSyncTab() {
     const res = await api('POST', { action: 'games_import', operator_ids: ids, active: activeNow });
     setBusy('');
     if (!res?.success) { toast.error(res?.message || 'Gagal mengimpor'); return; }
-    toast.success(`${res.created_games} game dan ${res.created_products} produk dibuat`);
+    toast.success(`${res.created_games} game dan ${res.created_products} produk dibuat${res.needs_server?.length ? `. ${res.needs_server.length} game perlu diisi server manual` : ''}`);
     setFound(null);
     setPicked({});
     load();
@@ -2178,7 +2202,7 @@ function GameSyncTab() {
                         <div className="w-9 h-9 rounded-lg bg-card overflow-hidden flex-shrink-0">{c.logo && <img src={c.logo} alt="" className="w-full h-full object-cover" />}</div>
                         <div className="min-w-0 flex-1">
                           <div className="text-sm truncate">{c.name}</div>
-                          <div className="text-muted text-xs">{c.products} produk · input: {c.fields}</div>
+                          <div className="text-muted text-xs">{c.products} produk · input: {c.fields}{c.needs_server && <span className="text-amber-400"> · server: isi manual</span>}{c.server_options > 0 && <span> · {c.server_options} server dari TokoVoucher</span>}</div>
                         </div>
                       </label>
                     ))}
@@ -2255,6 +2279,20 @@ function GameSyncTab() {
                   {dirty && <button onClick={() => saveGame(g.id, { margin_percent: e.pct === '' ? null : e.pct, margin_flat: e.flat === '' ? null : e.flat })} className="btn-primary text-xs px-3 py-2">Simpan</button>}
                 </div>
                 <div className="text-[11px] text-muted mt-1">Kosongkan = pakai margin semua game ({g.margin.percent}% + {rupiah(g.margin.flat)})</div>
+                {g.server?.needs_list && <div className="text-xs text-amber-400 mt-2">Perlu isi daftar server sebelum game ini diaktifkan.</div>}
+                <button onClick={() => openServer(g)} className="text-xs text-primary-glow mt-2 underline block">
+                  {g.server?.options?.length ? `Pilihan server (${g.server.options.length})` : 'Atur pilihan server'}
+                </button>
+                {srvFor === g.id && (
+                  <div className="mt-2 space-y-2">
+                    <textarea value={srvText} onChange={ev => setSrvText(ev.target.value)} rows={6} placeholder={'Satu pilihan per baris, mis.\nAsia\nEurope\nTW/HK/MO'} className="input-field text-sm w-full font-mono" />
+                    <div className="text-[11px] text-muted">Format: <code>nilai</code> atau <code>nilai|Label|Keterangan</code>. "Nilai" ikut dikirim ke TokoVoucher sebagai bagian target pesanan (user_id.nilai), jadi harus persis yang diminta TokoVoucher untuk game ini. Tes 1 order kecil dulu. Kosongkan semua untuk kembali ke kolom teks biasa.</div>
+                    <div className="flex gap-2">
+                      <button onClick={() => saveServer(g)} disabled={!!busy} className="btn-primary text-xs px-4 py-2">{busy === 'srv' ? <Loader2 size={13} className="animate-spin" /> : 'Simpan pilihan'}</button>
+                      <button onClick={() => setSrvFor('')} className="text-muted text-xs">Batal</button>
+                    </div>
+                  </div>
+                )}
                 <button onClick={() => { setLinkFor(linkFor === g.id ? '' : g.id); setOpQuery(g.name); setOpResults(null); }} className="text-xs text-primary-glow mt-2 underline">
                   {g.products === 0 ? 'Hubungkan ke operator TokoVoucher' : 'Ganti operator TokoVoucher'}
                 </button>
