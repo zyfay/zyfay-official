@@ -3,13 +3,14 @@
 //   GET   -> pengaturan margin + daftar game (foto, jumlah produk, margin yang berlaku)
 //   PUT   -> simpan pengaturan: { margin_percent?, margin_flat?, round_to?, auto_add?, per_game?: {id: {...}|null}, mapping?: {id: [operator_id]|null} }
 //   POST  -> { preview?: true, apply_anomalies?: false }  preview = hitung saja; tanpa preview = tulis ke database
+//   POST  -> { action: 'set_server_options', game_id, options: [...] }  isi/ubah pilihan server satu game (kosong = jadi kolom teks biasa)
 //   POST  -> { action: 'operators', q: 'free fire' }            cari operator TokoVoucher (untuk menghubungkan game manual)
 //   POST  -> { action: 'games_preview' }                          daftar game baru di TokoVoucher yang belum ada di toko
 //   POST  -> { action: 'games_import', operator_ids: [..], active?: false }  buat game baru + produknya
 import { getAdmin } from '../../../lib/auth';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { tv, isTvIpBlocked } from '../../../lib/tokovoucher';
-import { mergeConfig, marginFor, buildTvIndex, planGame, planNewGames, buildNewGame, ANOMALY_RATIO } from '../../../lib/gamesync';
+import { mergeConfig, marginFor, buildTvIndex, planGame, planNewGames, buildNewGame, cleanOptions, needsServerList, ANOMALY_RATIO } from '../../../lib/gamesync';
 
 export const config = { maxDuration: 60 };
 
@@ -47,7 +48,7 @@ export default async function handler(req, res) {
     // ---------- GET ----------
     if (req.method === 'GET') {
       const cfg = await loadConfig();
-      const { data: games, error } = await supabaseAdmin.from('games').select('id, name, publisher, category, image_url, is_active, sort_order').order('sort_order');
+      const { data: games, error } = await supabaseAdmin.from('games').select('id, name, publisher, category, image_url, is_active, sort_order, fields').order('sort_order');
       if (error) return res.status(500).json({ success: false, message: error.message });
       const counts = {};
       (await allProducts()).forEach(p => { if (p.game_id && !p.game_id.startsWith('ppob-')) counts[p.game_id] = (counts[p.game_id] || 0) + 1; });
@@ -55,7 +56,11 @@ export default async function handler(req, res) {
         success: true, config: publicCfg(cfg),
         games: (games || []).map(g => {
           const m = marginFor(cfg, g.id), o = cfg.per_game[g.id] || {};
-          return { ...g, products: counts[g.id] || 0, margin: { percent: m.marginPercent, flat: m.marginFlat, enabled: m.enabled, custom_percent: o.margin_percent ?? null, custom_flat: o.margin_flat ?? null } };
+          const second = Array.isArray(g.fields) ? g.fields.find(f => f.name === 'zone_id' || f.name === 'server') : null;
+          const { fields, ...rest } = g;
+          return { ...rest, products: counts[g.id] || 0,
+            server: { has_field: !!second, options: second?.options || [], needs_list: cfg.state.needs_server.includes(g.id) && !(second?.options?.length) },
+            margin: { percent: m.marginPercent, flat: m.marginFlat, enabled: m.enabled, custom_percent: o.margin_percent ?? null, custom_flat: o.margin_flat ?? null } };
         }),
       });
     }
@@ -101,6 +106,34 @@ export default async function handler(req, res) {
 
     if (req.method !== 'POST') return res.status(405).end();
 
+    // ---------- POST: atur pilihan server satu game (manual) ----------
+    if (req.body?.action === 'set_server_options') {
+      const { game_id, options } = req.body;
+      if (!ID.test(String(game_id || ''))) return res.status(400).json({ success: false, message: 'id game tidak valid' });
+      if (!Array.isArray(options)) return res.status(400).json({ success: false, message: 'options harus berupa daftar' });
+      const clean = options.length ? cleanOptions(options, { min: 1 }) : [];
+      if (!clean) return res.status(400).json({ success: false, message: 'Pilihan tidak valid: isi 1 sampai 100 pilihan unik, tiap nilai maksimal 60 karakter' });
+      const { data: g } = await supabaseAdmin.from('games').select('id, fields').eq('id', game_id).maybeSingle();
+      if (!g) return res.status(404).json({ success: false, message: 'Game tidak ditemukan' });
+      const fields = Array.isArray(g.fields) ? g.fields.map(f => ({ ...f })) : [];
+      let idx = fields.findIndex(f => f.name === 'zone_id');
+      if (idx < 0) idx = fields.findIndex(f => f.name === 'server');
+      if (idx < 0) {
+        if (!clean.length) return res.json({ success: true, fields });
+        fields.push({ name: 'zone_id', label: 'Server', placeholder: 'Pilih Server' }); idx = fields.length - 1;
+      }
+      if (clean.length) { fields[idx].options = clean; if (/^(masukkan|isi)/i.test(fields[idx].placeholder || '')) fields[idx].placeholder = 'Pilih ' + (fields[idx].label || 'Server'); }
+      else delete fields[idx].options;
+      const { error: uErr } = await supabaseAdmin.from('games').update({ fields }).eq('id', game_id);
+      if (uErr) return res.status(500).json({ success: false, message: uErr.message });
+      const cfg0 = await loadConfig();
+      if (clean.length && cfg0.state.needs_server.includes(game_id)) {
+        cfg0.state.needs_server = cfg0.state.needs_server.filter(x => x !== game_id);
+        await saveConfig(cfg0);
+      }
+      return res.json({ success: true, fields, options: clean.length });
+    }
+
     // ---------- POST: preview / sinkron ----------
     if (!tv.isConfigured()) return res.status(400).json({ success: false, message: 'TokoVoucher belum dikonfigurasi (env TOKOVOUCHER_*)' });
     const body = req.body || {};
@@ -141,7 +174,7 @@ export default async function handler(req, res) {
       if (body.action === 'games_preview') {
         return res.json({
           success: true, mode: 'games_preview',
-          candidates: found.candidates.map(c => ({ operator_id: c.operator_id, name: c.name, logo: c.logo, category: c.category, tv_category: c.tv_category, products: c.products, slug: c.slug, fields: c.fields.map(f => f.label).join(' + ') })),
+          candidates: found.candidates.map(c => ({ operator_id: c.operator_id, name: c.name, logo: c.logo, category: c.category, tv_category: c.tv_category, products: c.products, slug: c.slug, fields: c.fields.map(f => f.label).join(' + '), needs_server: c.needs_server, server_options: c.server_options })),
           similar: found.similar, skipped_categories: found.skipped_categories,
         });
       }
@@ -155,6 +188,11 @@ export default async function handler(req, res) {
 
       const { error: insErr } = await supabaseAdmin.from('games').insert(built.map(b => b.game));
       if (insErr) return res.status(500).json({ success: false, message: 'Gagal membuat game: ' + insErr.message });
+      const needServer = built.filter(b => b.needs_server).map(b => b.game.id);
+      if (needServer.length) {
+        cfg.state.needs_server = [...new Set([...cfg.state.needs_server, ...needServer])];
+        try { await saveConfig(cfg); } catch (e) { /* tidak fatal */ }
+      }
       const errors = []; let createdProducts = 0;
       for (const part of chunk(built.flatMap(b => b.products), 200)) {
         const { error } = await supabaseAdmin.from('products').insert(part);
@@ -162,7 +200,7 @@ export default async function handler(req, res) {
       }
       return res.json({
         success: true, mode: 'games_import', active,
-        created_games: built.length, created_products: createdProducts, ignored: wanted.length - picked.length,
+        created_games: built.length, created_products: createdProducts, ignored: wanted.length - picked.length, needs_server: needServer,
         games: built.map(b => ({ id: b.game.id, name: b.game.name, category: b.game.category, products: b.products.length, fields: b.game.fields.map(f => f.label).join(' + ') })),
         errors: errors.slice(0, 5),
       });
@@ -196,7 +234,7 @@ export default async function handler(req, res) {
     // dan jangan pernah menyentuh produk yang dimatikan manual.
     const off = new Set(cfg.state.auto_off);
     plans.forEach(p => { p.autoOffAdd.forEach(id => off.add(id)); p.autoOffRemove.forEach(id => off.delete(id)); });
-    try { await saveConfig({ ...cfg, state: { auto_off: [...off] } }); } catch (e) { errors.push('state: ' + e.message); }
+    try { await saveConfig({ ...cfg, state: { ...cfg.state, auto_off: [...off] } }); } catch (e) { errors.push('state: ' + e.message); }
 
     return res.status(errors.length && !written.updated && !written.inserted ? 500 : 200).json({ ...out, written, errors: errors.slice(0, 5) });
   } catch (e) {
